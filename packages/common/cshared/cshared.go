@@ -5,14 +5,14 @@ package main
 */
 import "C"
 import (
-	"fmt"
 	"sync"
-	"time"
 	"unsafe"
+	
+	"github.com/AoEiuV020/go-mono/packages/common"
 )
 
 var (
-	loggers   = make(map[int]*Logger)
+	loggers   = make(map[int]*common.Logger)
 	nextID    = 1
 	loggersMu sync.Mutex
 )
@@ -22,7 +22,8 @@ func LoggerNew(prefix *C.char) C.int {
 	loggersMu.Lock()
 	defer loggersMu.Unlock()
 	
-	logger := &Logger{prefix: C.GoString(prefix)}
+	// 调用原始 Go 代码
+	logger := common.NewLogger(C.GoString(prefix))
 	id := nextID
 	loggers[id] = logger
 	nextID++
@@ -36,55 +37,45 @@ func LoggerLog(loggerID C.int, message *C.char) {
 	loggersMu.Unlock()
 	
 	if logger != nil {
+		// 调用原始 Go 代码
 		logger.Log(C.GoString(message))
+	}
+}
+
+//export LoggerLogFormat
+func LoggerLogFormat(loggerID C.int, format *C.char, args *C.char) {
+	loggersMu.Lock()
+	logger := loggers[int(loggerID)]
+	loggersMu.Unlock()
+	
+	if logger != nil {
+		// 简单处理：直接输出格式化后的字符串
+		logger.Log(C.GoString(args))
 	}
 }
 
 //export ToUpperCase
 func ToUpperCase(s *C.char) *C.char {
-	result := toUpperCase(C.GoString(s))
+	// 调用原始 Go 代码
+	result := common.ToUpperCase(C.GoString(s))
 	return C.CString(result)
 }
 
 //export Max
 func Max(a, b C.int) C.int {
-	return C.int(max(int(a), int(b)))
+	// 调用原始 Go 代码
+	return C.int(common.Max(int(a), int(b)))
+}
+
+//export Min
+func Min(a, b C.int) C.int {
+	// 调用原始 Go 代码
+	return C.int(common.Min(int(a), int(b)))
 }
 
 //export FreeString
 func FreeString(s *C.char) {
 	C.free(unsafe.Pointer(s))
-}
-
-// Logger 提供简单的日志功能
-type Logger struct {
-	prefix string
-}
-
-// Log 输出日志信息
-func (l *Logger) Log(message string) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	fmt.Printf("[%s] [%s] %s\n", timestamp, l.prefix, message)
-}
-
-func toUpperCase(s string) string {
-	// 简单实现
-	result := ""
-	for _, c := range s {
-		if c >= 'a' && c <= 'z' {
-			result += string(c - 32)
-		} else {
-			result += string(c)
-		}
-	}
-	return result
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func main() {}

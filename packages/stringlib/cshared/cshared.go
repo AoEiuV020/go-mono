@@ -5,15 +5,14 @@ package main
 */
 import "C"
 import (
-	"fmt"
-	"strings"
 	"sync"
-	"time"
 	"unsafe"
+	
+	"github.com/AoEiuV020/go-mono/packages/stringlib"
 )
 
 var (
-	processors   = make(map[int]*StringProcessor)
+	processors   = make(map[int]*stringlib.StringProcessor)
 	nextProcID   = 1
 	processorsMu sync.Mutex
 )
@@ -23,7 +22,8 @@ func StringProcessorNew() C.int {
 	processorsMu.Lock()
 	defer processorsMu.Unlock()
 	
-	sp := &StringProcessor{prefix: "StringLib"}
+	// 调用原始 Go 代码
+	sp := stringlib.NewStringProcessor()
 	id := nextProcID
 	processors[id] = sp
 	nextProcID++
@@ -37,6 +37,7 @@ func StringProcessorReverse(spID C.int, s *C.char) *C.char {
 	processorsMu.Unlock()
 	
 	if sp != nil {
+		// 调用原始 Go 代码
 		result := sp.Reverse(C.GoString(s))
 		return C.CString(result)
 	}
@@ -57,6 +58,7 @@ func StringProcessorConcat(spID C.int, sep *C.char, parts **C.char, count C.int)
 			goParts[i] = C.GoString(goSlice[i])
 		}
 		
+		// 调用原始 Go 代码
 		result := sp.Concat(C.GoString(sep), goParts...)
 		return C.CString(result)
 	}
@@ -70,6 +72,7 @@ func StringProcessorToUpperCase(spID C.int, s *C.char) *C.char {
 	processorsMu.Unlock()
 	
 	if sp != nil {
+		// 调用原始 Go 代码
 		result := sp.ToUpperCaseWithLog(C.GoString(s))
 		return C.CString(result)
 	}
@@ -83,6 +86,7 @@ func StringProcessorCountWords(spID C.int, s *C.char) C.int {
 	processorsMu.Unlock()
 	
 	if sp != nil {
+		// 调用原始 Go 代码
 		return C.int(sp.CountWords(C.GoString(s)))
 	}
 	return 0
@@ -91,61 +95,6 @@ func StringProcessorCountWords(spID C.int, s *C.char) C.int {
 //export FreeString
 func FreeString(s *C.char) {
 	C.free(unsafe.Pointer(s))
-}
-
-// StringProcessor 提供字符串处理功能
-type StringProcessor struct {
-	prefix string
-}
-
-// Reverse 反转字符串
-func (sp *StringProcessor) Reverse(s string) string {
-	runes := []rune(s)
-	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
-		runes[i], runes[j] = runes[j], runes[i]
-	}
-	result := string(runes)
-	sp.log(fmt.Sprintf("Reverse(%q) = %q", s, result))
-	return result
-}
-
-// Concat 连接多个字符串
-func (sp *StringProcessor) Concat(separator string, parts ...string) string {
-	result := strings.Join(parts, separator)
-	sp.log(fmt.Sprintf("Concat with separator %q: %d parts", separator, len(parts)))
-	return result
-}
-
-// ToUpperCaseWithLog 将字符串转换为大写
-func (sp *StringProcessor) ToUpperCaseWithLog(s string) string {
-	result := toUpperCase(s)
-	sp.log(fmt.Sprintf("ToUpperCase(%q) = %q", s, result))
-	return result
-}
-
-// CountWords 计算字符串中的单词数
-func (sp *StringProcessor) CountWords(s string) int {
-	words := strings.Fields(s)
-	count := len(words)
-	sp.log(fmt.Sprintf("CountWords(%q) = %d", s, count))
-	return count
-}
-
-func (sp *StringProcessor) log(message string) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	fmt.Printf("[%s] [%s] %s\n", timestamp, sp.prefix, message)
-}
-
-func toUpperCase(s string) string {
-	result := ""
-	for _, c := range s {
-		if c >= 'a' && c <= 'z' {
-			result += string(c - 32)
-		} else {
-			result += string(c)
-		}
-	}
-	return result
 }
 
 func main() {}
