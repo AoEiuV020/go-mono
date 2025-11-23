@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Go 多模块项目构建脚本
-# 用于编译静态链接和动态链接两种版本的应用
+# Go 多模块项目构建脚本 - 真正的动态库版本
+# 对比静态链接 vs 动态链接的差异
 
 set -e  # 遇到错误立即退出
 
@@ -19,42 +19,72 @@ PACKAGES_DIR="${PROJECT_ROOT}/packages"
 APPS_DIR="${PROJECT_ROOT}/apps"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Go 多模块项目构建脚本${NC}"
+echo -e "${BLUE}Go 多模块项目构建脚本 (动态库版本)${NC}"
 echo -e "${BLUE}========================================${NC}"
 
 # 清理之前的构建产物
-echo -e "\n${YELLOW}[1/6] 清理构建目录...${NC}"
+echo -e "\n${YELLOW}[1/5] 清理构建目录...${NC}"
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"/{static,dynamic/lib}
 
-# 编译静态链接应用（标准编译，包含所有符号和调试信息）
-echo -e "\n${YELLOW}[2/6] 编译静态链接应用...${NC}"
+# 编译静态链接应用
+echo -e "\n${YELLOW}[2/5] 编译静态链接应用...${NC}"
+echo "  - 使用标准 go build，直接依赖三个库"
 cd "${APPS_DIR}/static-app"
-echo "  - 执行: go build（标准模式，包含调试信息）"
 go build -o "${BUILD_DIR}/static/static-app"
 echo -e "${GREEN}  ✓ 静态链接应用编译完成${NC}"
 
-# 编译"动态链接"应用（使用 -ldflags 优化，去除符号表和调试信息）
-echo -e "\n${YELLOW}[3/6] 编译精简版应用（模拟动态链接的优势）...${NC}"
+# 编译动态库
+echo -e "\n${YELLOW}[3/5] 编译动态库（.dylib）...${NC}"
+
+# 检测操作系统
+OS_TYPE=$(uname)
+if [ "$OS_TYPE" = "Darwin" ]; then
+    LIB_EXT="dylib"
+    echo "  - 检测到 macOS，将生成 .dylib 文件"
+else
+    LIB_EXT="so"
+    echo "  - 检测到 Linux，将生成 .so 文件"
+fi
+
+# 编译 common 动态库
+echo "  - 编译 libcommon.${LIB_EXT}..."
+cd "${PACKAGES_DIR}/common/cshared"
+go build -buildmode=c-shared -o "${BUILD_DIR}/dynamic/lib/libcommon.${LIB_EXT}" .
+echo -e "${GREEN}    ✓ libcommon.${LIB_EXT} 编译完成${NC}"
+
+# 编译 mathlib 动态库
+echo "  - 编译 libmathlib.${LIB_EXT}..."
+cd "${PACKAGES_DIR}/mathlib/cshared"
+go build -buildmode=c-shared -o "${BUILD_DIR}/dynamic/lib/libmathlib.${LIB_EXT}" .
+echo -e "${GREEN}    ✓ libmathlib.${LIB_EXT} 编译完成${NC}"
+
+# 编译 stringlib 动态库
+echo "  - 编译 libstringlib.${LIB_EXT}..."
+cd "${PACKAGES_DIR}/stringlib/cshared"
+go build -buildmode=c-shared -o "${BUILD_DIR}/dynamic/lib/libstringlib.${LIB_EXT}" .
+echo -e "${GREEN}    ✓ libstringlib.${LIB_EXT} 编译完成${NC}"
+
+# 编译动态链接应用
+echo -e "\n${YELLOW}[4/5] 编译动态链接应用...${NC}"
+echo "  - 使用 CGO 调用动态库"
 cd "${APPS_DIR}/dynamic-app"
-echo "  - 执行: go build -ldflags='-s -w'（去除符号表和调试信息）"
-go build -ldflags="-s -w" -o "${BUILD_DIR}/dynamic/dynamic-app"
-echo -e "${GREEN}  ✓ 精简版应用编译完成${NC}"
 
-# 说明：由于 Go 语言的特性，真正的动态链接库在不同平台支持程度不同
-# 这里我们通过编译标志的差异来展示不同构建方式的文件大小差异
-echo -e "\n${BLUE}说明: 静态版本包含完整的调试信息和符号表${NC}"
-echo -e "${BLUE}     精简版本去除了这些信息，文件更小，运行时性能略有提升${NC}"
+# 设置环境变量
+export CGO_ENABLED=1
+export CGO_LDFLAGS="-L${BUILD_DIR}/dynamic/lib"
 
-# 跳过共享库编译步骤
-echo -e "\n${YELLOW}[4/6] 共享库编译...${NC}"
-echo "  - 注意: 在当前平台上，Go 的共享库支持有限"
-echo "  - 改为对比标准编译 vs 精简编译的差异"
-mkdir -p "${BUILD_DIR}/dynamic/lib"
-echo -e "${GREEN}  ✓ 跳过共享库编译${NC}"
+go build -o "${BUILD_DIR}/dynamic/dynamic-app"
+echo -e "${GREEN}  ✓ 动态链接应用编译完成${NC}"
+
+# 在 macOS 上修改动态库加载路径
+if [ "$OS_TYPE" = "Darwin" ]; then
+    echo "  - 修改 rpath 为相对路径..."
+    install_name_tool -add_rpath "@executable_path/lib" "${BUILD_DIR}/dynamic/dynamic-app" 2>/dev/null || true
+fi
 
 # 创建运行脚本
-echo -e "\n${YELLOW}[5/6] 创建运行脚本...${NC}"
+echo -e "\n${YELLOW}[5/5] 创建运行脚本...${NC}"
 
 # 静态链接应用运行脚本
 cat > "${BUILD_DIR}/static/run.sh" << 'EOF'
@@ -69,40 +99,71 @@ echo -e "${GREEN}  ✓ 静态链接运行脚本创建完成${NC}"
 cat > "${BUILD_DIR}/dynamic/run.sh" << 'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
-# 设置库路径
-export LD_LIBRARY_PATH="$(pwd)/lib:${LD_LIBRARY_PATH}"
+# 设置动态库搜索路径
 export DYLD_LIBRARY_PATH="$(pwd)/lib:${DYLD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$(pwd)/lib:${LD_LIBRARY_PATH}"
 ./dynamic-app
 EOF
 chmod +x "${BUILD_DIR}/dynamic/run.sh"
 echo -e "${GREEN}  ✓ 动态链接运行脚本创建完成${NC}"
 
-# 显示编译结果
-echo -e "\n${YELLOW}[6/6] 构建完成，文件大小统计:${NC}"
-echo ""
-echo -e "${BLUE}标准编译版本（包含调试信息）:${NC}"
+# 显示文件大小统计
+echo -e "\n${BLUE}========================================${NC}"
+echo -e "${BLUE}文件大小统计${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+echo -e "\n${YELLOW}静态链接版本:${NC}"
 if [ -f "${BUILD_DIR}/static/static-app" ]; then
-    STATIC_SIZE=$(ls -l "${BUILD_DIR}/static/static-app" | awk '{print $5}')
-    ls -lh "${BUILD_DIR}/static/static-app" | awk '{print "  " $9 ": " $5 " (" $5 " bytes)"}'
+    STATIC_SIZE=$(stat -f%z "${BUILD_DIR}/static/static-app" 2>/dev/null || stat -c%s "${BUILD_DIR}/static/static-app" 2>/dev/null)
+    STATIC_SIZE_H=$(ls -lh "${BUILD_DIR}/static/static-app" | awk '{print $5}')
+    echo "  static-app: ${STATIC_SIZE_H} (${STATIC_SIZE} bytes)"
+    echo "  总计: ${STATIC_SIZE_H}"
 fi
 
-echo ""
-echo -e "${BLUE}精简编译版本（去除调试信息）:${NC}"
+echo -e "\n${YELLOW}动态链接版本:${NC}"
+DYNAMIC_TOTAL=0
 if [ -f "${BUILD_DIR}/dynamic/dynamic-app" ]; then
-    DYNAMIC_SIZE=$(ls -l "${BUILD_DIR}/dynamic/dynamic-app" | awk '{print $5}')
-    ls -lh "${BUILD_DIR}/dynamic/dynamic-app" | awk '{print "  " $9 ": " $5 " (" $5 " bytes)"}'
+    APP_SIZE=$(stat -f%z "${BUILD_DIR}/dynamic/dynamic-app" 2>/dev/null || stat -c%s "${BUILD_DIR}/dynamic/dynamic-app" 2>/dev/null)
+    APP_SIZE_H=$(ls -lh "${BUILD_DIR}/dynamic/dynamic-app" | awk '{print $5}')
+    echo "  dynamic-app: ${APP_SIZE_H} (${APP_SIZE} bytes)"
+    DYNAMIC_TOTAL=$((DYNAMIC_TOTAL + APP_SIZE))
 fi
 
-# 计算大小差异
-if [ -n "$STATIC_SIZE" ] && [ -n "$DYNAMIC_SIZE" ]; then
-    DIFF=$((STATIC_SIZE - DYNAMIC_SIZE))
-    PERCENT=$(awk "BEGIN {printf \"%.2f\", ($DIFF / $STATIC_SIZE) * 100}")
-    echo ""
-    echo -e "${YELLOW}大小差异: 精简版减少了 $(numfmt --to=iec $DIFF 2>/dev/null || echo "$DIFF bytes") (${PERCENT}%)${NC}"
+echo "  动态库:"
+for lib in "${BUILD_DIR}/dynamic/lib"/*.${LIB_EXT}; do
+    if [ -f "$lib" ]; then
+        LIB_SIZE=$(stat -f%z "$lib" 2>/dev/null || stat -c%s "$lib" 2>/dev/null)
+        LIB_SIZE_H=$(ls -lh "$lib" | awk '{print $5}')
+        LIB_NAME=$(basename "$lib")
+        echo "    ${LIB_NAME}: ${LIB_SIZE_H} (${LIB_SIZE} bytes)"
+        DYNAMIC_TOTAL=$((DYNAMIC_TOTAL + LIB_SIZE))
+    fi
+done
+
+# 计算总计
+DYNAMIC_TOTAL_H=$(numfmt --to=iec-i --suffix=B $DYNAMIC_TOTAL 2>/dev/null || echo "$DYNAMIC_TOTAL bytes")
+echo "  总计: ${DYNAMIC_TOTAL_H} (${DYNAMIC_TOTAL} bytes)"
+
+# 计算差异
+if [ -n "$STATIC_SIZE" ] && [ -n "$DYNAMIC_TOTAL" ]; then
+    echo -e "\n${YELLOW}对比分析:${NC}"
+    DIFF=$((STATIC_SIZE - DYNAMIC_TOTAL))
+    
+    if [ $DIFF -gt 0 ]; then
+        DIFF_H=$(numfmt --to=iec-i --suffix=B $DIFF 2>/dev/null || echo "$DIFF bytes")
+        PERCENT=$(awk "BEGIN {printf \"%.2f\", (($DIFF * 1.0) / $STATIC_SIZE) * 100}")
+        echo "  静态链接比动态链接大: ${DIFF_H} (${PERCENT}%)"
+    elif [ $DIFF -lt 0 ]; then
+        DIFF_ABS=$((-DIFF))
+        DIFF_H=$(numfmt --to=iec-i --suffix=B $DIFF_ABS 2>/dev/null || echo "$DIFF_ABS bytes")
+        PERCENT=$(awk "BEGIN {printf \"%.2f\", (($DIFF_ABS * 1.0) / $STATIC_SIZE) * 100}")
+        echo "  动态链接比静态链接大: ${DIFF_H} (${PERCENT}%)"
+    else
+        echo "  两者大小相同"
+    fi
 fi
 
-echo ""
-echo -e "${GREEN}========================================${NC}"
+echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}构建成功完成！${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""

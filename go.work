@@ -1,0 +1,9 @@
+go 1.25.4
+
+use (
+	./apps/dynamic-app
+	./apps/static-app
+	./packages/common
+	./packages/mathlib
+	./packages/stringlib
+)
